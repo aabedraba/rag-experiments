@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 from typing import List, TypedDict
 from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
 from langchain_openai import ChatOpenAI
 from langfuse.langchain import CallbackHandler
 from langfuse import get_client, observe
@@ -23,15 +24,15 @@ langfuse_handler = CallbackHandler()
 bot = ChatOpenAI(model="gpt-5-mini")
 
 
-def get_retriever(urls: List[str]) -> List[Document]:
+def get_retriever(urls: List[str], chunk_size: int = 250, chunk_overlap: int = 0, k: int = 3) -> BaseRetriever:
   # Load documents from the URLs
-  docs = [
-    WebBaseLoader(url).load() for url in urls
-  ]
+  docs = [WebBaseLoader(url).load() for url in urls]
   docs_list = [item for sublist in docs for item in sublist]
 
   # Split the documents into chunks
-  text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
+  text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+    chunk_size=chunk_size, chunk_overlap=chunk_overlap
+  )
   doc_splits = text_splitter.split_documents(docs_list)
 
   # Add the document chunks to the Vector Store
@@ -41,7 +42,7 @@ def get_retriever(urls: List[str]) -> List[Document]:
   )
 
   # Create a retriever to retrieve the document chunks
-  return vectorstore.as_retriever(k=3)
+  return vectorstore.as_retriever(k=k)
 
 
 class RagBotResponse(TypedDict):
@@ -52,9 +53,9 @@ class RagBotResponse(TypedDict):
 # Add decorator so this function is traced in Lngfuse
 @observe()
 def rag_bot(question: str) -> RagBotResponse:
-  retriever = get_retriever(urls)
+  retriever = get_retriever(urls, chunk_size=256, chunk_overlap=0)
   # Trace the document retrieval, and add the documents to the span
-  with langfuse.start_as_current_span(name="retrieve_documents", input=question) as span:
+  with langfuse.start_as_current_observation(name="retrieve_documents", input=question, as_type="retriever") as span:
     docs = retriever.invoke(question)
     span.update(output=docs)
   docs_string = "".join(doc.page_content for doc in docs)
